@@ -38,6 +38,18 @@ type RosterPlayer = {
   status: string | null;
 };
 
+type SleeperMatchupEntry = {
+  roster_id: number;
+  matchup_id: number | null;
+  points: number;
+};
+
+type CurrentMatchup = {
+  week: number;
+  myMatchup: SleeperMatchupEntry;
+  opponent: SleeperMatchupEntry | null;
+};
+
 export default function Home() {
 
   const [showConnect, setShowConnect] = useState(false);
@@ -51,6 +63,9 @@ export default function Home() {
   const [currentRoster, setCurrentRoster] =
     useState<SleeperRoster | null>(null);
   const [rosterPlayers, setRosterPlayers] = useState<RosterPlayer[]>([]);
+  const [leagueRosters, setLeagueRosters] = useState<SleeperRoster[]>([]);
+  const [currentMatchup, setCurrentMatchup] =
+    useState<CurrentMatchup | null>(null);
 
   async function handleConnect() {
     if (!username.trim()) {
@@ -114,6 +129,8 @@ export default function Home() {
         return;
       }
 
+      setLeagueRosters(rosterData);
+
       // 2. Find the roster owned by the connected Sleeper user
       const myRoster = rosterData.find(
         (roster: SleeperRoster) =>
@@ -128,6 +145,19 @@ export default function Home() {
       // 3. Save the selected league and roster
       setSelectedLeague(league);
       setCurrentRoster(myRoster);
+
+      const matchupResponse = await fetch(
+        `/api/sleeper/matchup?leagueId=${league.league_id}&rosterId=${myRoster.roster_id}`
+      );
+
+      const matchupData = await matchupResponse.json();
+
+      if (matchupResponse.ok) {
+        setCurrentMatchup(matchupData);
+        console.log("Current matchup:", matchupData);
+      } else {
+        console.error("Unable to load matchup:", matchupData.error);
+      }
 
       // 4. Convert Sleeper player IDs into actual player information
       const playerIds = myRoster.players ?? [];
@@ -170,6 +200,58 @@ export default function Home() {
   const benchPlayers = rosterPlayers.filter(
     (player) => !starterIds.includes(player.player_id)
   );
+
+  const wins = currentRoster?.settings?.wins ?? 0;
+  const losses = currentRoster?.settings?.losses ?? 0;
+  const ties = currentRoster?.settings?.ties ?? 0;
+
+  const teamRecord = currentRoster
+    ? ties > 0
+      ? `${wins}-${losses}-${ties}`
+      : `${wins}-${losses}`
+    : "0-0";
+
+  const rankedRosters = [...leagueRosters].sort((a, b) => {
+    const aWins = a.settings?.wins ?? 0;
+    const bWins = b.settings?.wins ?? 0;
+
+    if (bWins !== aWins) {
+      return bWins - aWins;
+    }
+
+    const aLosses = a.settings?.losses ?? 0;
+    const bLosses = b.settings?.losses ?? 0;
+
+    if (aLosses !== bLosses) {
+      return aLosses - bLosses;
+    }
+
+    const aPoints = a.settings?.fpts ?? 0;
+    const bPoints = b.settings?.fpts ?? 0;
+
+    return bPoints - aPoints;
+  });
+
+  const leagueRank =
+    currentRoster && rankedRosters.length > 0
+      ? rankedRosters.findIndex(
+        (roster) => roster.roster_id === currentRoster.roster_id
+      ) + 1
+      : null;
+
+  const myMatchupPoints =
+    currentMatchup?.myMatchup.points ?? 0;
+
+  const opponentMatchupPoints =
+    currentMatchup?.opponent?.points ?? 0;
+
+  const totalMatchupPoints =
+    myMatchupPoints + opponentMatchupPoints;
+
+  const scoringShare =
+    totalMatchupPoints > 0
+      ? (myMatchupPoints / totalMatchupPoints) * 100
+      : 50;
 
   return (
     <main className="min-h-screen bg-[#050914] text-white">
@@ -341,15 +423,19 @@ export default function Home() {
             <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <StatCard
                 label="Record"
-                value="0-0"
+                value={teamRecord}
                 subtext="Season record"
-                accent="Week 1"
+                accent="Current"
               />
 
               <StatCard
                 label="League Rank"
-                value="--"
-                subtext="Out of 12 teams"
+                value={leagueRank ? `#${leagueRank}` : "--"}
+                subtext={
+                  selectedLeague
+                    ? `Out of ${selectedLeague.total_rosters} teams`
+                    : "Connect your league"
+                }
                 accent="Power Rank"
               />
 
@@ -376,7 +462,9 @@ export default function Home() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                      Week 1
+                      {currentMatchup
+                        ? `Week ${currentMatchup.week}`
+                        : "Current Week"}
                     </p>
 
                     <h3 className="mt-1 text-lg font-semibold">
@@ -385,35 +473,77 @@ export default function Home() {
                   </div>
 
                   <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-400">
-                    Upcoming
+                    {currentMatchup ? "Live Data" : "Waiting"}
                   </span>
                 </div>
 
                 <div className="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-6">
-                  <Team
-                    initials="YOU"
-                    name="Your Team"
-                    projection="--"
-                  />
 
+                  {/* Your Team */}
                   <div className="text-center">
-                    <p className="text-xs text-slate-600">VS</p>
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-400/20 bg-emerald-400/10 text-xs font-bold text-emerald-400">
+                      YOU
+                    </div>
+
+                    <p className="mt-3 font-semibold">
+                      Your Team
+                    </p>
+
+                    <p className="mt-2 text-2xl font-bold">
+                      {currentMatchup
+                        ? myMatchupPoints.toFixed(2)
+                        : "--"}
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      Points
+                    </p>
                   </div>
 
-                  <Team
-                    initials="OPP"
-                    name="Opponent"
-                    projection="--"
-                  />
+                  <div className="text-xs font-semibold text-slate-600">
+                    VS
+                  </div>
+
+                  {/* Opponent */}
+                  <div className="text-center">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-xs font-bold text-slate-300">
+                      OPP
+                    </div>
+
+                    <p className="mt-3 font-semibold">
+                      {currentMatchup?.opponent
+                        ? `Roster #${currentMatchup.opponent.roster_id}`
+                        : "Opponent"}
+                    </p>
+
+                    <p className="mt-2 text-2xl font-bold">
+                      {currentMatchup?.opponent
+                        ? opponentMatchupPoints.toFixed(2)
+                        : "--"}
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      Points
+                    </p>
+                  </div>
                 </div>
+
                 <div className="mt-8 border-t border-white/5 pt-5">
                   <div className="flex justify-between text-xs text-slate-500">
-                    <span>Win probability</span>
-                    <span>Connect league to calculate</span>
+                    <span>Current scoring share</span>
+
+                    <span>
+                      {currentMatchup
+                        ? `${Math.round(scoringShare)}%`
+                        : "--"}
+                    </span>
                   </div>
 
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400" />
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all duration-500"
+                      style={{ width: `${scoringShare}%` }}
+                    />
                   </div>
                 </div>
               </section>
@@ -888,8 +1018,8 @@ function RosterPlayerCard({
   return (
     <div
       className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 transition ${starter
-          ? "border-emerald-400/15 bg-emerald-400/[0.03] hover:border-emerald-400/30"
-          : "border-white/5 bg-black/20 hover:border-white/10 hover:bg-white/[0.03]"
+        ? "border-emerald-400/15 bg-emerald-400/[0.03] hover:border-emerald-400/30"
+        : "border-white/5 bg-black/20 hover:border-white/10 hover:bg-white/[0.03]"
         }`}
     >
       <PlayerAvatar player={player} />
