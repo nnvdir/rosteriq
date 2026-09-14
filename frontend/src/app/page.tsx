@@ -30,6 +30,14 @@ type SleeperRoster = {
   };
 };
 
+type RosterPlayer = {
+  player_id: string;
+  full_name: string;
+  position: string | null;
+  team: string | null;
+  status: string | null;
+};
+
 export default function Home() {
 
   const [showConnect, setShowConnect] = useState(false);
@@ -42,6 +50,7 @@ export default function Home() {
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
   const [currentRoster, setCurrentRoster] =
     useState<SleeperRoster | null>(null);
+  const [rosterPlayers, setRosterPlayers] = useState<RosterPlayer[]>([]);
 
   async function handleConnect() {
     if (!username.trim()) {
@@ -93,6 +102,7 @@ export default function Home() {
     if (!connectedUser) return;
 
     try {
+      // 1. Get every roster in the selected league
       const response = await fetch(
         `/api/sleeper/rosters?leagueId=${league.league_id}`
       );
@@ -104,6 +114,7 @@ export default function Home() {
         return;
       }
 
+      // 2. Find the roster owned by the connected Sleeper user
       const myRoster = rosterData.find(
         (roster: SleeperRoster) =>
           roster.owner_id === connectedUser.user_id
@@ -114,8 +125,32 @@ export default function Home() {
         return;
       }
 
+      // 3. Save the selected league and roster
       setSelectedLeague(league);
       setCurrentRoster(myRoster);
+
+      // 4. Convert Sleeper player IDs into actual player information
+      const playerIds = myRoster.players ?? [];
+
+      if (playerIds.length > 0) {
+        const playerResponse = await fetch(
+          `/api/sleeper/players?ids=${encodeURIComponent(playerIds.join(","))}`
+        );
+
+        const playerData = await playerResponse.json();
+
+        if (!playerResponse.ok) {
+          console.error("Unable to load players:", playerData.error);
+          return;
+        }
+
+        setRosterPlayers(playerData);
+
+        console.log("Converted players:", playerData);
+      } else {
+        setRosterPlayers([]);
+      }
+
       setShowLeaguePicker(false);
 
       console.log("Your roster:", myRoster);
@@ -123,6 +158,18 @@ export default function Home() {
       console.error("Roster loading failed:", error);
     }
   }
+
+  const starterIds = currentRoster?.starters ?? [];
+
+  const starterPlayers = starterIds
+    .map((id) =>
+      rosterPlayers.find((player) => player.player_id === id)
+    )
+    .filter((player): player is RosterPlayer => Boolean(player));
+
+  const benchPlayers = rosterPlayers.filter(
+    (player) => !starterIds.includes(player.player_id)
+  );
 
   return (
     <main className="min-h-screen bg-[#050914] text-white">
@@ -404,6 +451,87 @@ export default function Home() {
                 </div>
               </section>
             </div>
+
+            {currentRoster && (
+              <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.025] p-6">
+
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                      Your Team
+                    </p>
+
+                    <h3 className="mt-1 text-lg font-semibold">
+                      Roster
+                    </h3>
+                  </div>
+
+                  <div className="text-right">
+                    <p className="text-sm font-medium">
+                      {rosterPlayers.length} Players
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      {starterPlayers.length} starters • {benchPlayers.length} bench
+                    </p>
+                  </div>
+                </div>
+
+                {/* Starters */}
+                <div className="mt-8">
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-emerald-400" />
+
+                    <h4 className="text-sm font-semibold uppercase tracking-[0.15em]">
+                      Starting Lineup
+                    </h4>
+
+                    <span className="text-xs text-slate-500">
+                      {starterPlayers.length}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {starterPlayers.map((player) => (
+                      <RosterPlayerCard
+                        key={player.player_id}
+                        player={player}
+                        starter
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="my-8 border-t border-white/5" />
+
+                {/* Bench */}
+                <div>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-slate-600" />
+
+                    <h4 className="text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">
+                      Bench
+                    </h4>
+
+                    <span className="text-xs text-slate-500">
+                      {benchPlayers.length}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {benchPlayers.map((player) => (
+                      <RosterPlayerCard
+                        key={player.player_id}
+                        player={player}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+              </section>
+            )}
 
             {/* Bottom */}
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
@@ -710,6 +838,86 @@ function PositionBar({ position }: { position: string }) {
       <div className="h-2 overflow-hidden rounded-full bg-slate-800">
         <div className="h-full w-0 bg-emerald-400" />
       </div>
+    </div>
+  );
+}
+
+function PlayerAvatar({ player }: { player: RosterPlayer }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  const isDefense = player.position === "DEF";
+
+  const imageUrl = isDefense
+    ? `https://a.espncdn.com/i/teamlogos/nfl/500/${player.team?.toLowerCase()}.png`
+    : `https://sleepercdn.com/content/nfl/players/thumb/${player.player_id}.jpg`;
+
+  if (imageFailed) {
+    return (
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-xs font-bold text-emerald-400">
+        {player.position ?? "?"}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`h-12 w-12 shrink-0 overflow-hidden rounded-xl ${isDefense ? "bg-white/5 p-1.5" : "bg-slate-800"
+        }`}
+    >
+      <img
+        src={imageUrl}
+        alt={player.full_name}
+        onError={() => setImageFailed(true)}
+        className={
+          isDefense
+            ? "h-full w-full object-contain"
+            : "h-full w-full object-cover object-top"
+        }
+      />
+    </div>
+  );
+}
+
+function RosterPlayerCard({
+  player,
+  starter = false,
+}: {
+  player: RosterPlayer;
+  starter?: boolean;
+}) {
+  return (
+    <div
+      className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 transition ${starter
+          ? "border-emerald-400/15 bg-emerald-400/[0.03] hover:border-emerald-400/30"
+          : "border-white/5 bg-black/20 hover:border-white/10 hover:bg-white/[0.03]"
+        }`}
+    >
+      <PlayerAvatar player={player} />
+
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-white">
+          {player.full_name}
+        </p>
+
+        <div className="mt-1 flex items-center gap-2">
+          <span
+            className={`text-xs font-semibold ${starter ? "text-emerald-400" : "text-slate-400"
+              }`}
+          >
+            {player.position ?? "?"}
+          </span>
+
+          <span className="text-xs text-slate-500">
+            {player.team ?? "FA"}
+          </span>
+        </div>
+      </div>
+
+      {starter && (
+        <span className="shrink-0 rounded-full bg-emerald-400/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-400">
+          Starter
+        </span>
+      )}
     </div>
   );
 }
